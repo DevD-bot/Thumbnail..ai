@@ -78,6 +78,26 @@ export default function ChatInterface({ sessionId, onSessionCreated, onImageGene
         e.target.value = "";
     };
 
+    // Handle Ctrl+V image paste from clipboard
+    const handlePaste = (e: React.ClipboardEvent<HTMLTextAreaElement>) => {
+        const items = Array.from(e.clipboardData.items);
+        const imageItem = items.find((item) => item.type.startsWith("image/"));
+        if (imageItem) {
+            e.preventDefault(); // Don't insert image data as text
+            const file = imageItem.getAsFile();
+            if (!file) return;
+            const url = URL.createObjectURL(file);
+            setUploadedImage({
+                url,
+                name: `pasted-image-${Date.now()}.png`,
+                size: file.size,
+            });
+            // Show a subtle flash on the preview to indicate paste worked
+            textareaRef.current?.focus();
+        }
+        // If it's text, let default paste behaviour handle it (do nothing)
+    };
+
     const handleSend = async () => {
         if (!input.trim() && !uploadedImage) return;
         if (isLoading) return;
@@ -279,11 +299,12 @@ export default function ChatInterface({ sessionId, onSessionCreated, onImageGene
                     <textarea
                         ref={textareaRef}
                         className="chat-textarea"
-                        placeholder="Describe your thumbnail... e.g. 'CS2 intense gaming thumbnail with fire effects'"
+                        placeholder="Describe your thumbnail... or Ctrl+V to paste a screenshot"
                         value={input}
                         onChange={(e) => setInput(e.target.value)}
                         onKeyDown={handleKeyDown}
                         onInput={handleTextareaInput}
+                        onPaste={handlePaste}
                         rows={1}
                         disabled={isLoading}
                     />
@@ -308,7 +329,7 @@ export default function ChatInterface({ sessionId, onSessionCreated, onImageGene
                         </button>
                     </div>
                 </div>
-                <p className="input-hint">Press Enter to send · Shift+Enter for new line · Upload image for editing</p>
+                <p className="input-hint">Enter to send · Shift+Enter for new line · 📋 Ctrl+V to paste screenshot</p>
             </div>
         </div>
     );
