@@ -116,23 +116,26 @@ YOU MUST include ALL these exact physical details in the generated character. Th
 
         // ── Step 6: Build response ────────────────────────────────
         const isDemo = mainToolResult?.demo;
+        const modelUsed = (mainToolResult as { modelUsed?: string } | null)?.modelUsed || (isDemo ? "Demo" : "SD3-Large");
         const faceSwapNote = isFaceSwap && faceAnalysis
-            ? `\n**Face matching:** ${faceAnalysis.faceDescription?.slice(0, 80)}`
+            ? `\n**Face matched:** ${faceAnalysis.faceDescription?.slice(0, 80)}`
             : "";
 
+        const promptPreview = plan.prompt.slice(0, 220) + (plan.prompt.length > 220 ? "..." : "");
+
         const responseLines = [
-            `🎨 **${plan.style.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}** thumbnail generated!`,
+            `🎨 **${plan.style.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}** — generated with ${modelUsed}`,
             "",
-            `**Style:** ${plan.style} | **Mood:** ${plan.mood} | **Lighting:** ${plan.lighting}`,
+            `**Mood:** ${plan.mood} | **Lighting:** ${plan.lighting}`,
             plan.effects.length ? `**Effects:** ${plan.effects.join(", ")}` : "",
             plan.textContent ? `**Text overlay:** "${plan.textContent}"` : "",
             faceSwapNote,
             "",
-            "**Generation steps:**",
-            ...plan.steps.map((s) => `• ${s}`),
+            "**Prompt sent to Stability AI:**",
+            `\`${promptPreview}\``,
             "",
             isDemo
-                ? "⚡ *Running in Demo Mode — add your API keys for real AI generation.*"
+                ? "⚡ *Demo Mode — add API keys for real generation.*"
                 : "✅ Generated with real AI models.",
         ].filter(Boolean).join("\n");
 
