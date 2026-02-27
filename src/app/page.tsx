@@ -1,65 +1,99 @@
-import Image from "next/image";
+"use client";
+import { useState, useEffect, useCallback } from "react";
+import ChatInterface from "@/components/ChatInterface";
+import PreviewPanel from "@/components/PreviewPanel";
+import HistorySidebar from "@/components/HistorySidebar";
+
+interface Plan {
+  style?: string;
+  mood?: string;
+  lighting?: string;
+  effects?: string[];
+  colorPalette?: string[];
+  textContent?: string;
+}
+
+interface SessionSummary {
+  id: string;
+  title: string;
+  messageCount: number;
+  currentImageUrl?: string;
+  updatedAt: number;
+}
 
 export default function Home() {
+  const [sessionId, setSessionId] = useState<string | null>(null);
+  const [sessions, setSessions] = useState<SessionSummary[]>([]);
+  const [previewImage, setPreviewImage] = useState<string | null>(null);
+  const [previewPlan, setPreviewPlan] = useState<Plan | null>(null);
+  const [chatKey, setChatKey] = useState(0); // force remount on new chat
+
+  const refreshSessions = useCallback(async () => {
+    try {
+      const res = await fetch("/api/history");
+      const data = await res.json();
+      setSessions(data.sessions || []);
+    } catch {
+      // silently fail
+    }
+  }, []);
+
+  useEffect(() => {
+    refreshSessions();
+    const interval = setInterval(refreshSessions, 5000);
+    return () => clearInterval(interval);
+  }, [refreshSessions]);
+
+  const handleSessionCreated = (id: string) => {
+    setSessionId(id);
+    refreshSessions();
+  };
+
+  const handleImageGenerated = (url: string, plan?: Plan) => {
+    setPreviewImage(url);
+    if (plan) setPreviewPlan(plan);
+    refreshSessions();
+  };
+
+  const handleNewChat = () => {
+    setSessionId(null);
+    setPreviewImage(null);
+    setPreviewPlan(null);
+    setChatKey((k) => k + 1);
+  };
+
+  const handleSelectSession = async (id: string) => {
+    setSessionId(id);
+    setChatKey((k) => k + 1);
+    try {
+      const res = await fetch(`/api/history?sessionId=${id}`);
+      const data = await res.json();
+      if (data.session?.currentImageUrl) {
+        setPreviewImage(data.session.currentImageUrl);
+      }
+    } catch {
+      // silently fail
+    }
+  };
+
   return (
-    <div className="flex min-h-screen items-center justify-center bg-zinc-50 font-sans dark:bg-black">
-      <main className="flex min-h-screen w-full max-w-3xl flex-col items-center justify-between py-32 px-16 bg-white dark:bg-black sm:items-start">
-        <Image
-          className="dark:invert"
-          src="/next.svg"
-          alt="Next.js logo"
-          width={100}
-          height={20}
-          priority
+    <div className="app-layout">
+      <HistorySidebar
+        sessions={sessions}
+        activeSessionId={sessionId}
+        onSelectSession={handleSelectSession}
+        onNewChat={handleNewChat}
+      />
+
+      <div className="main-area">
+        <ChatInterface
+          key={chatKey}
+          sessionId={sessionId}
+          onSessionCreated={handleSessionCreated}
+          onImageGenerated={handleImageGenerated}
         />
-        <div className="flex flex-col items-center gap-6 text-center sm:items-start sm:text-left">
-          <h1 className="max-w-xs text-3xl font-semibold leading-10 tracking-tight text-black dark:text-zinc-50">
-            To get started, edit the page.tsx file.
-          </h1>
-          <p className="max-w-md text-lg leading-8 text-zinc-600 dark:text-zinc-400">
-            Looking for a starting point or more instructions? Head over to{" "}
-            <a
-              href="https://vercel.com/templates?framework=next.js&utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Templates
-            </a>{" "}
-            or the{" "}
-            <a
-              href="https://nextjs.org/learn?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-              className="font-medium text-zinc-950 dark:text-zinc-50"
-            >
-              Learning
-            </a>{" "}
-            center.
-          </p>
-        </div>
-        <div className="flex flex-col gap-4 text-base font-medium sm:flex-row">
-          <a
-            className="flex h-12 w-full items-center justify-center gap-2 rounded-full bg-foreground px-5 text-background transition-colors hover:bg-[#383838] dark:hover:bg-[#ccc] md:w-[158px]"
-            href="https://vercel.com/new?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            <Image
-              className="dark:invert"
-              src="/vercel.svg"
-              alt="Vercel logomark"
-              width={16}
-              height={16}
-            />
-            Deploy Now
-          </a>
-          <a
-            className="flex h-12 w-full items-center justify-center rounded-full border border-solid border-black/[.08] px-5 transition-colors hover:border-transparent hover:bg-black/[.04] dark:border-white/[.145] dark:hover:bg-[#1a1a1a] md:w-[158px]"
-            href="https://nextjs.org/docs?utm_source=create-next-app&utm_medium=appdir-template-tw&utm_campaign=create-next-app"
-            target="_blank"
-            rel="noopener noreferrer"
-          >
-            Documentation
-          </a>
-        </div>
-      </main>
+        <PreviewPanel imageUrl={previewImage} plan={previewPlan} />
+      </div>
     </div>
   );
 }
