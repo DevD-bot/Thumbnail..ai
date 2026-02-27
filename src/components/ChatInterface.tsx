@@ -159,8 +159,8 @@ export default function ChatInterface({ sessionId, onSessionCreated, onImageGene
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({
                     message: userMessage.content,
-                    // Send first image as primary; others as context
                     imageUrl: imagesToSend[0]?.url || null,
+                    additionalImageUrls: imagesToSend.slice(1).map((img) => img.url),
                     sessionId,
                 }),
             });

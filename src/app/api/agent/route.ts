@@ -2,7 +2,7 @@
 // app/api/agent/route.ts — Main AI Agent orchestrator
 // ================================================================
 import { NextRequest, NextResponse } from "next/server";
-import { analyzeImage } from "@/lib/vision";
+import { analyzeImage, analyzeFace } from "@/lib/vision";
 import { planThumbnail } from "@/lib/planner";
 import { executeTool } from "@/lib/tools";
 import { getOrCreateSession, addMessage, updateSession } from "@/lib/memory";
@@ -10,52 +10,89 @@ import { getOrCreateSession, addMessage, updateSession } from "@/lib/memory";
 export async function POST(request: NextRequest) {
     try {
         const body = await request.json();
-        const { message, imageUrl, sessionId } = body;
+        // imageUrl = primary/style image, additionalImageUrls = extra images (face photos etc.)
+        const { message, imageUrl, additionalImageUrls, sessionId } = body;
 
         if (!message) {
             return NextResponse.json({ error: "Message is required" }, { status: 400 });
         }
 
-        // Get or create session
         const session = getOrCreateSession(sessionId);
-
-        // Add user message to memory
         addMessage(session.id, {
             role: "user",
             content: message,
             imageUrl: imageUrl || undefined,
         });
 
-        // Pipeline tracking
         const toolCallLog: Array<{ name: string; status: string; message: string }> = [];
 
-        // ── Step 1: Vision (if image uploaded) ──────────────────────
-        let imageAnalysis = null;
-        if (imageUrl) {
-            toolCallLog.push({ name: "analyze_image", status: "running", message: "Analyzing uploaded image..." });
-            imageAnalysis = await analyzeImage(imageUrl);
+        // ── Step 1: Detect if this is a face-swap / multi-image request ──
+        const allImageUrls: string[] = [
+            ...(imageUrl ? [imageUrl] : []),
+            ...(additionalImageUrls || []),
+        ];
+
+        const lowerMsg = message.toLowerCase();
+        const isFaceSwap =
+            allImageUrls.length >= 2 &&
+            (lowerMsg.includes("face") ||
+                lowerMsg.includes("replace") ||
+                lowerMsg.includes("put") ||
+                lowerMsg.includes("add") ||
+                lowerMsg.includes("person") ||
+                lowerMsg.includes("me") ||
+                lowerMsg.includes("selfie"));
+
+        // ── Step 2: Vision analysis ──────────────────────────────────
+        let styleImageAnalysis = null;
+        let faceAnalysis = null;
+
+        if (allImageUrls.length > 0) {
+            toolCallLog.push({ name: "analyze_image", status: "running", message: "Analyzing reference image..." });
+            styleImageAnalysis = await analyzeImage(allImageUrls[0]);
             toolCallLog[toolCallLog.length - 1].status = "done";
-            toolCallLog[toolCallLog.length - 1].message = `Image analyzed: ${imageAnalysis.summary}`;
+            toolCallLog[toolCallLog.length - 1].message = `Style image analyzed ✓`;
         }
 
-        // ── Step 2: Planner (LLM brain) ─────────────────────────────
-        toolCallLog.push({ name: "plan_thumbnail", status: "running", message: "Planning thumbnail design..." });
+        if (isFaceSwap && allImageUrls.length >= 2) {
+            toolCallLog.push({ name: "analyze_face", status: "running", message: "Extracting face features from photo..." });
+            faceAnalysis = await analyzeFace(allImageUrls[1]);
+            toolCallLog[toolCallLog.length - 1].status = "done";
+            toolCallLog[toolCallLog.length - 1].message = `Face analyzed: ${faceAnalysis.faceDescription?.slice(0, 60) || "done"} ✓`;
+        }
+
+        // ── Step 3: Build enriched instruction ──────────────────────
+        let enrichedInstruction = message;
+        if (isFaceSwap && faceAnalysis) {
+            enrichedInstruction = `${message}
+
+IMPORTANT — The person's face details extracted from their photo:
+- Face: ${faceAnalysis.faceDescription}
+- Hair: ${faceAnalysis.hairDescription}
+- Skin tone: ${faceAnalysis.skinTone}
+- Features: ${faceAnalysis.facialFeatures}
+- Overall character: ${faceAnalysis.characterDescription}
+
+YOU MUST include ALL these exact physical details in the generated character. The person's real face must be faithfully represented.`;
+        }
+
+        // ── Step 4: Planner ─────────────────────────────────────────
+        toolCallLog.push({ name: "plan_thumbnail", status: "running", message: "Designing thumbnail plan..." });
         const previousMessages = session.messages
             .slice(-6)
             .filter((m) => m.role === "user" || m.role === "assistant")
             .map((m) => ({ role: m.role, content: m.content }));
 
-        const plan = await planThumbnail(message, imageAnalysis || undefined, previousMessages);
+        const plan = await planThumbnail(enrichedInstruction, styleImageAnalysis || undefined, previousMessages);
         toolCallLog[toolCallLog.length - 1].status = "done";
-        toolCallLog[toolCallLog.length - 1].message = `Plan ready: ${plan.style} style, ${plan.mood} mood`;
+        toolCallLog[toolCallLog.length - 1].message = `Plan ready ✓`;
 
-        // ── Step 3: Execute Tools ────────────────────────────────────
+        // ── Step 5: Execute tools ───────────────────────────────────
         let generatedImageUrl: string | undefined;
         let mainToolResult = null;
 
         for (const toolName of plan.toolCalls) {
-            if (toolName === "analyze_image") continue; // already done
-            if (toolName === "plan_thumbnail") continue;
+            if (["analyze_image", "analyze_face", "plan_thumbnail"].includes(toolName)) continue;
 
             const toolEntry = { name: toolName, status: "running", message: `Running ${toolName}...` };
             toolCallLog.push(toolEntry);
@@ -77,32 +114,34 @@ export async function POST(request: NextRequest) {
             }
         }
 
-        // ── Step 4: Build assistant response ────────────────────────
+        // ── Step 6: Build response ────────────────────────────────
         const isDemo = mainToolResult?.demo;
+        const faceSwapNote = isFaceSwap && faceAnalysis
+            ? `\n**Face matching:** ${faceAnalysis.faceDescription?.slice(0, 80)}`
+            : "";
 
         const responseLines = [
-            `🎨 **${plan.style.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())} Thumbnail** created!`,
+            `🎨 **${plan.style.replace(/-/g, " ").replace(/\b\w/g, (c) => c.toUpperCase())}** thumbnail generated!`,
             "",
             `**Style:** ${plan.style} | **Mood:** ${plan.mood} | **Lighting:** ${plan.lighting}`,
             plan.effects.length ? `**Effects:** ${plan.effects.join(", ")}` : "",
-            plan.textContent ? `**Text:** "${plan.textContent}"` : "",
+            plan.textContent ? `**Text overlay:** "${plan.textContent}"` : "",
+            faceSwapNote,
             "",
             "**Generation steps:**",
             ...plan.steps.map((s) => `• ${s}`),
             "",
             isDemo
-                ? "⚡ *Running in Demo Mode — add your Groq & Stability AI keys in `.env.local` for real AI generation.*"
+                ? "⚡ *Running in Demo Mode — add your API keys for real AI generation.*"
                 : "✅ Generated with real AI models.",
         ].filter(Boolean).join("\n");
 
-        // Add assistant message to memory
         const assistantMessage = addMessage(session.id, {
             role: "assistant",
             content: responseLines,
             generatedImageUrl,
         });
 
-        // Update session with latest image
         if (generatedImageUrl) {
             updateSession(session.id, { currentImageUrl: generatedImageUrl });
         }
@@ -114,6 +153,11 @@ export async function POST(request: NextRequest) {
             plan,
             generatedImageUrl,
             isDemo,
+            faceAnalysis: faceAnalysis ? {
+                faceDescription: faceAnalysis.faceDescription,
+                hairDescription: faceAnalysis.hairDescription,
+                skinTone: faceAnalysis.skinTone,
+            } : null,
         });
     } catch (error) {
         console.error("Agent error:", error);
