@@ -1,8 +1,6 @@
 // ================================================================
 // stabilityai.ts — Stability AI wrapper, SD3-Large primary
 // ================================================================
-const isDemoMode = process.env.DEMO_MODE === "true" || !process.env.STABILITY_API_KEY;
-
 const DEMO_IMAGES = [
     "https://images.unsplash.com/photo-1542751371-adc38448a05e?w=1280&h=720&fit=crop",
     "https://images.unsplash.com/photo-1511512578047-dfb367046420?w=1280&h=720&fit=crop",
@@ -23,6 +21,9 @@ export interface GenerateResult {
 }
 
 export async function generateImage(options: GenerateOptions): Promise<GenerateResult> {
+    // Read env fresh every call — never use module-level cache
+    const isDemoMode = process.env.DEMO_MODE === "true" || !process.env.STABILITY_API_KEY;
+
     if (isDemoMode) {
         await new Promise((r) => setTimeout(r, 2000));
         const imageUrl = DEMO_IMAGES[demoIndex++ % DEMO_IMAGES.length];

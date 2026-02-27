@@ -4,8 +4,6 @@
 import Groq from "groq-sdk";
 import { ImageAnalysis } from "./vision";
 
-const isDemoMode = process.env.DEMO_MODE === "true" || !process.env.GROQ_API_KEY;
-
 export interface ThumbnailPlan {
     style: string;
     mood: string;
@@ -67,6 +65,9 @@ export async function planThumbnail(
     imageAnalysis?: ImageAnalysis,
     previousMessages?: Array<{ role: string; content: string }>
 ): Promise<ThumbnailPlan> {
+    // Read env fresh every call — never use module-level cache
+    const isDemoMode = process.env.DEMO_MODE === "true" || !process.env.GROQ_API_KEY;
+
     if (isDemoMode) {
         await new Promise((r) => setTimeout(r, 800));
         return buildDemoPlan(instruction);

@@ -379,6 +379,7 @@ h6 {
 .message-row {
   display: flex;
   gap: 12px;
+  align-items: flex-start;
   animation: fadeSlideIn 300ms ease-out;
 }
 
@@ -408,11 +409,12 @@ h6 {
 }
 
 .message-bubble {
-  max-width: 70%;
+  max-width: 78%;
   padding: 14px 18px;
   border-radius: var(--radius-lg);
   font-size: 0.9rem;
   line-height: 1.65;
+  word-break: break-word;
 }
 
 .message-bubble.ai {
