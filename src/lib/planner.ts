@@ -1,5 +1,5 @@
 // ================================================================
-// planner.ts — LLM converts user instruction → structured plan
+// planner.ts — LLM converts user instruction → structured SD prompt
 // ================================================================
 import Groq from "groq-sdk";
 import { ImageAnalysis } from "./vision";
@@ -22,27 +22,40 @@ export interface ThumbnailPlan {
     toolCalls: string[];
 }
 
-const SYSTEM_PROMPT = `You are a professional gaming thumbnail designer AI.
-Your job is to convert user instructions into structured thumbnail generation plans.
+// ──────────────────────────────────────────────────────────────────
+// SYSTEM PROMPT — heavily engineered for SD gaming thumbnails
+// ──────────────────────────────────────────────────────────────────
+const SYSTEM_PROMPT = `You are an expert Stable Diffusion prompt engineer who specialises in YouTube gaming thumbnails.
 
-Always return a valid JSON object with this exact structure:
+Your ONLY job is to read the user's instruction word-for-word and convert every detail into the best possible Stable Diffusion prompt.
+
+RULES YOU MUST FOLLOW:
+1. READ THE USER'S INSTRUCTION CAREFULLY. Never ignore any detail they mention.
+2. If they say "CS2" → include: cs2 counter-strike, tactical shooter, desert eagle, AK-47, utility usage, competitive map, realistic game environment
+3. If they say "fire" → include: blazing fire, flame particles, embers, heat shimmer, smoky fire effect, fiery glow
+4. If they say "intense" → include: dramatic lighting, high contrast shadows, cinematic color grade, intense atmospheric haze
+5. If they say "Valorant" → include: valorant agent, neon colors, stylized art, radiant energy
+6. If they say "neon" → include: neon lights, electric glow, cyberpunk aesthetic, bioluminescent
+7. Always add these quality boosters: ultra HD, 8k resolution, hyperrealistic, professional photography, trending on ArtStation, unreal engine 5 render, award winning digital art, volumetric lighting, depth of field
+8. The PROMPT must be 80-150 words. Short prompts result in bad images.
+9. The NEGATIVE PROMPT must always include: blurry, low quality, bad anatomy, deformed face, distorted, watermark, text errors, ugly, pixelated, low resolution, amateur, boring, flat lighting, washed out colors, overexposed, underexposed
+
+Return ONLY this exact JSON structure, nothing else:
 {
-  "style": "cinematic|gaming|esports|neon|fire|minimal|etc",
-  "mood": "intense|hype|calm|aggressive|epic|etc",
-  "lighting": "dramatic|soft|neon|cinematic|backlit|etc",
-  "effects": ["fire", "particles", "glow", "etc"],
+  "style": "one word style label",
+  "mood": "one word mood",
+  "lighting": "one phrase lighting description",
+  "effects": ["effect1", "effect2", "effect3"],
   "colorPalette": ["#hex1", "#hex2", "#hex3"],
-  "textStyle": "bold-glow|fire-text|neon|metallic|3d|etc",
-  "textContent": "main text for thumbnail if any",
-  "backgroundDescription": "detailed background description",
-  "characterDescription": "character/subject description",
-  "prompt": "complete positive Stable Diffusion prompt",
-  "negativePrompt": "negative SD prompt",
+  "textStyle": "text style description",
+  "textContent": "text that should appear in thumbnail",
+  "backgroundDescription": "detailed background",
+  "characterDescription": "detailed character/subject",
+  "prompt": "FULL STABLE DIFFUSION PROMPT HERE — must be 80-150 words with all quality boosters",
+  "negativePrompt": "full negative prompt",
   "steps": ["Step 1: ...", "Step 2: ...", "Step 3: ..."],
-  "toolCalls": ["generate_thumbnail", "enhance_image"]
-}
-
-Return ONLY valid JSON.`;
+  "toolCalls": ["generate_thumbnail"]
+}`;
 
 export async function planThumbnail(
     instruction: string,
@@ -57,65 +70,85 @@ export async function planThumbnail(
     try {
         const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
 
-        const context = imageAnalysis
-            ? `\n\nImage analysis of uploaded photo: ${JSON.stringify(imageAnalysis)}`
+        // Build rich context from image analysis
+        const imageContext = imageAnalysis
+            ? `\n\nUploaded image analysis:
+- Subject: ${imageAnalysis.characterDescription || imageAnalysis.summary}
+- Background: ${imageAnalysis.background}
+- Mood: ${imageAnalysis.mood}
+- Colors: ${imageAnalysis.colors?.join(", ")}
+- Style: ${imageAnalysis.style}
+Use these details to inform the thumbnail — match the person's appearance and environment.`
             : "";
+
+        // Include last 4 messages for conversation context
+        const history = (previousMessages?.slice(-4) || []) as Groq.Chat.ChatCompletionMessageParam[];
 
         const messages: Groq.Chat.ChatCompletionMessageParam[] = [
             { role: "system", content: SYSTEM_PROMPT },
-            ...(previousMessages?.slice(-4) as Groq.Chat.ChatCompletionMessageParam[] || []),
+            ...history,
             {
                 role: "user",
-                content: `Create a thumbnail plan for: "${instruction}"${context}`,
+                content: `USER INSTRUCTION: "${instruction}"${imageContext}
+
+CRITICAL: Your prompt must faithfully execute EVERY detail the user mentioned. Do not add things they didn't ask for. Do not ignore anything they said.`,
             },
         ];
 
         const response = await groq.chat.completions.create({
             model: "llama-3.3-70b-versatile",
             messages,
-            max_tokens: 1000,
-            temperature: 0.7,
+            max_tokens: 1200,
+            temperature: 0.4, // Lower = more faithful to instruction
+            response_format: { type: "json_object" },
         });
 
         const text = response.choices[0]?.message?.content || "{}";
-        const jsonMatch = text.match(/\{[\s\S]*\}/);
-        if (jsonMatch) {
-            return JSON.parse(jsonMatch[0]);
+        try {
+            return JSON.parse(text);
+        } catch {
+            const jsonMatch = text.match(/\{[\s\S]*\}/);
+            return jsonMatch ? JSON.parse(jsonMatch[0]) : buildDemoPlan(instruction);
         }
-        return buildDemoPlan(instruction);
-    } catch {
+    } catch (err) {
+        console.error("Planner error:", err);
         return buildDemoPlan(instruction);
     }
 }
 
+// ── Demo fallback ─────────────────────────────────────────────────
 function buildDemoPlan(instruction: string): ThumbnailPlan {
-    const lowerInstr = instruction.toLowerCase();
-    const isCS2 = lowerInstr.includes("cs2") || lowerInstr.includes("csgo");
-    const isValorant = lowerInstr.includes("valorant");
-    const hasFire = lowerInstr.includes("fire");
-    const isIntense = lowerInstr.includes("intense") || lowerInstr.includes("aggressive");
+    const lower = instruction.toLowerCase();
+    const isCS2 = lower.includes("cs2") || lower.includes("csgo") || lower.includes("counter");
+    const isValorant = lower.includes("valorant");
+    const hasFire = lower.includes("fire");
+    const hasNeon = lower.includes("neon");
+    const isIntense = lower.includes("intense") || lower.includes("aggressive") || lower.includes("epic");
+
+    const basePrompt = `YouTube gaming thumbnail, ${instruction}, ultra HD 8k resolution, hyperrealistic, professional photography, cinematic color grade, dramatic volumetric lighting, depth of field, trending on ArtStation, unreal engine 5 render, award winning digital art`;
 
     return {
         style: isCS2 ? "cs2-tactical" : isValorant ? "valorant-neon" : "gaming-cinematic",
         mood: isIntense ? "aggressive" : "epic",
-        lighting: hasFire ? "fire-dramatic" : "cinematic-high-contrast",
-        effects: hasFire ? ["fire", "embers", "smoke", "glow"] : ["particles", "lens-flare", "glow"],
-        colorPalette: isCS2 ? ["#FF6B00", "#1A1A2E", "#E94560"] : ["#FF4655", "#0F1923", "#FFFCA0"],
-        textStyle: hasFire ? "fire-glow-bold" : "metallic-3d",
-        textContent: isCS2 ? "GAME OVER" : isValorant ? "CLUTCH" : "EPIC PLAYS",
-        backgroundDescription:
-            "Dark atmospheric gaming environment with dramatic volumetric lighting, fog, and depth of field blur",
-        characterDescription:
-            "Professional esports player, determined expression, high detail, dramatic lighting",
-        prompt: `gaming thumbnail, ${instruction}, cinematic lighting, dramatic atmosphere, professional esports aesthetic, high contrast, vivid colors, 4k, hyperrealistic, trending on artstation`,
-        negativePrompt:
-            "blurry, low quality, distorted face, text errors, watermark, ugly, deformed, duplicate",
+        lighting: hasFire ? "dramatic fire-lit, flickering flame light, warm orange key light" : "cinematic high contrast, rim light, deep shadows",
+        effects: hasFire
+            ? ["blazing fire", "flame particles", "embers", "heat shimmer", "smoke"]
+            : hasNeon
+                ? ["neon glow", "electric sparks", "light streaks", "bloom effect"]
+                : ["particle burst", "lens flare", "cinematic glow", "atmospheric haze"],
+        colorPalette: hasFire ? ["#FF6B00", "#FF2200", "#1A1A2E"] : hasNeon ? ["#BF00FF", "#00FFFF", "#0F1923"] : ["#E94560", "#1A1A2E", "#3B82F6"],
+        textStyle: hasFire ? "fire-glow bold 3D typography" : "metallic chrome bold 3D",
+        textContent: isCS2 ? "GAME OVER" : isValorant ? "ACE!" : "EPIC PLAYS",
+        backgroundDescription: `Dark atmospheric ${isCS2 ? "CS2 competitive map environment, dust and smoke" : "gaming environment"}, dramatic depth of field blur`,
+        characterDescription: "Professional esports player, determined expression, ultra-detailed, perfect face",
+        prompt: `${basePrompt}, ${hasFire ? "raging fire, blazing flames, ember particles, fire light casting, heat shimmer" : "neon lights, particle effects"}, dark background with dramatic lighting, professional YouTube thumbnail composition`,
+        negativePrompt: "blurry, low quality, bad anatomy, deformed face, distorted face, extra limbs, text errors, watermark, ugly, pixelated, low resolution, amateur photography, flat lighting, washed out colors, overexposed, underexposed, cartoon, anime (unless requested)",
         steps: [
-            "Step 1: Analyze uploaded image for face and composition",
-            "Step 2: Apply gaming-style background with dramatic lighting",
-            hasFire ? "Step 3: Add fire text effects and particle system" : "Step 3: Apply neon glow and color grading",
-            "Step 4: Enhance contrast and add cinematic post-processing",
+            `Step 1: Parse instruction — "${instruction.slice(0, 60)}"`,
+            "Step 2: Build high-detail SD prompt with quality boosters",
+            "Step 3: Generate with Stability AI Core",
+            "Step 4: Apply cinematic post-processing",
         ],
-        toolCalls: ["analyze_image", "generate_thumbnail", "enhance_image"],
+        toolCalls: ["generate_thumbnail"],
     };
 }
