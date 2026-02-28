@@ -8,6 +8,14 @@ import { executeTool } from "@/lib/tools";
 import { getOrCreateSession, addMessage, updateSession } from "@/lib/memory";
 
 export async function POST(request: NextRequest) {
+    // ── DEBUG: print env state on every request ──────────────────
+    console.log("[AGENT DEBUG]", {
+        DEMO_MODE: process.env.DEMO_MODE,
+        HAS_GROQ: !!process.env.GROQ_API_KEY,
+        HAS_STABILITY: !!process.env.STABILITY_API_KEY,
+        GROQ_PREFIX: process.env.GROQ_API_KEY?.slice(0, 8),
+    });
+    // ─────────────────────────────────────────────────────────────
     try {
         const body = await request.json();
         // imageUrl = primary/style image, additionalImageUrls = extra images (face photos etc.)

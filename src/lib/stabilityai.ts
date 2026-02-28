@@ -88,9 +88,10 @@ export async function generateImage(options: GenerateOptions): Promise<GenerateR
             return { imageUrl: `data:image/png;base64,${b642}`, modelUsed: "Core" };
 
         } catch (err2) {
-            console.error("All Stability AI calls failed:", err2);
-            const imageUrl = DEMO_IMAGES[demoIndex++ % DEMO_IMAGES.length];
-            return { imageUrl, demo: true };
+            // Don't silently fall back to demo — surface the real error
+            const errMsg = err2 instanceof Error ? err2.message : String(err2);
+            console.error("[Stability AI] All models failed. Final error:", errMsg);
+            throw new Error(`Stability AI generation failed: ${errMsg}`);
         }
     }
 }
